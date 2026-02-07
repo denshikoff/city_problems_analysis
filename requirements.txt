@@ -1,0 +1,1 @@
+networkx pandas scikit-learn sentence-transformers bertopic gensim nltk matplotlib seaborn pymorphy3 spacy
