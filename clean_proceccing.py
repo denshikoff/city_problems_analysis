@@ -12,6 +12,27 @@ nltk.download('punkt', quiet=True)
 nltk.download('punkt_tab', quiet=True)
 nltk.download('stopwords', quiet=True)
 
+DEFAULT_CUSTOM_STOPWORDS = {
+    # служебные
+    "это", "там", "здесь", "который", "которая", "которые",
+    "быть", "есть", "являться",
+    "такой", "такая", "такие",
+    "очень", "просто", "вообще",
+
+    # обращения / формальности
+    "прошу", "просить", "обращение", "обращаться",
+    "сообщать", "сообщение",
+    "заявка", "жалоба",
+
+    # временные / абстрактные
+    "год", "месяц", "день", "время",
+    "сегодня", "вчера", "сейчас",
+
+    # люди (слишком общие)
+    "человек", "люди", "житель", "жители"
+}
+
+
 class TextPreprocessor:
     """
     Класс для предобработки текстов обращений граждан.
@@ -21,7 +42,7 @@ class TextPreprocessor:
     def __init__(self, 
                  language: str = 'russian',
                  use_lemmatization: bool = True,
-                 custom_stopwords: Optional[List[str]] = None):
+                 custom_stopwords: Optional[List[str]] = DEFAULT_CUSTOM_STOPWORDS):
         """
         Инициализация препроцессора
         

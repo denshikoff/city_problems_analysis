@@ -7,7 +7,7 @@ import numpy as np
 from collections import Counter
 import logging
 from datetime import datetime
-
+from complex_problem_score import ComplexProblemScorer
 
 class UrbanKnowledgeGraph:
     """Класс для построения и анализа графа знаний городских проблем"""
@@ -343,102 +343,112 @@ class UrbanKnowledgeGraph:
 
         return centrality_metrics
 
+
+
+
     def identify_problems(self, min_frequency: int = 2) -> pd.DataFrame:
         """
-        Идентификация городских проблем
-
-        Args:
-            min_frequency: Минимальная частота упоминания для определения проблемы
-
-        Returns:
-            DataFrame с идентифицированными проблемами
+        Идентификация городских проблем + оценка комплексности каждой проблемы
         """
+        STOP_PROBLEMS = {
+            "дело", "внимание", "проблема", "решение",
+            "работа", "место", "состояние", "мера",
+            "срок", "город", "вопрос", "факт", "случай"
+        }
         self.logger.info("Идентификация городских проблем")
 
-        # Проверяем наличие relations_df
         if not hasattr(self, 'relations_df') or self.relations_df.empty:
-            self.logger.warning("Нет данных об отношениях. Сначала выполните build_graph_from_dataframe.")
+            self.logger.warning("Нет данных об отношениях")
             return pd.DataFrame()
 
-        # Анализ объектов как потенциальных проблем
         object_counts = self.relations_df['Объект'].value_counts()
-
-        # Анализ связей (глаголов) для определения проблемных действий
-        verb_counts = self.relations_df['Связь'].value_counts()
-
         problem_candidates = []
 
         for obj, count in object_counts.items():
-            if count >= min_frequency:
-                # Поиск субъектов, связанных с объектом
-                related_subjects = self.relations_df[
-                    self.relations_df['Объект'] == obj
-                    ]['Субъект'].unique()
+            if count < min_frequency:
+                continue
+            if obj.lower() in STOP_PROBLEMS:
+                continue    
+            # ---- базовая логика (ТВОЯ, без изменений) ----
+            related_rows = self.relations_df[self.relations_df['Объект'] == obj]
 
-                # Поиск глаголов, связанных с объектом
-                related_verbs = self.relations_df[
-                    self.relations_df['Объект'] == obj
-                    ]['Связь'].unique().tolist()  # Явно преобразуем в список
+            related_subjects = related_rows['Субъект'].unique()
+            related_verbs = related_rows['Связь'].unique().tolist()
 
-                # Классификация проблемы
-                problem_type = self._classify_problem(obj, related_verbs)
+            problem_type = self._classify_problem(obj, related_verbs)
+            importance_score = self._calculate_problem_importance(
+                obj, count, related_subjects.tolist(), related_verbs
+            )
 
-                # Расчет важности
-                importance_score = self._calculate_problem_importance(
-                    obj, count, related_subjects.tolist(), related_verbs  # Преобразуем в список
-                )
-                problem_candidates.append({
-                    'Проблема': obj,
-                    'Тип_проблемы': problem_type,
-                    'Частота_упоминаний': count,
-                    'Количество_субъектов': len(related_subjects),
-                    'Связанные_субъекты': ', '.join(related_subjects[:5]) if len(related_subjects) > 0 else '',
-                    'Связанные_действия': ', '.join(related_verbs[:5]),
-                    'Важность': importance_score,
-                    'Центральность_степени': self.centrality_df[
-                        self.centrality_df['Узел'] == obj
-                        ]['Degree'].values[0] if hasattr(self, 'centrality_df') and
-                                                 obj in self.centrality_df['Узел'].values else 0,
-                    'Центральность_посредническая': self.centrality_df[
-                        self.centrality_df['Узел'] == obj
-                        ]['Betweenness'].values[0] if hasattr(self, 'centrality_df') and
-                                                      obj in self.centrality_df['Узел'].values else 0
-                })
+            # ---- NEW: локальный подграф проблемы ----
+            nodes = set(related_subjects) | {obj}
+            subgraph = self.graph.subgraph(nodes).copy()
 
-        # Создание DataFrame проблем
-        if problem_candidates:
-            problems_df = pd.DataFrame(problem_candidates)
-            problems_df = problems_df.sort_values('Важность', ascending=False)
+            relations_count = len(related_rows)
+            unique_entities = len(nodes)
+            unique_actions = len(related_verbs)
+            subgraph_density = nx.density(subgraph) if subgraph.number_of_nodes() > 1 else 0.0
+            if unique_actions < 2 or unique_entities < 2:
+                continue
+            # ---- NEW: complexity_score ----
+            scorer = ComplexProblemScorer(
+                frequency=count,
+                unique_entities=unique_entities,
+                unique_actions=unique_actions,
+                subgraph_density=subgraph_density,
+                relations_count=relations_count
+            )
 
-            # Фильтрация по проблемным глаголам или типам
-            if hasattr(self, 'problem_verbs'):
-                problem_mask = (
-                                       problems_df['Тип_проблемы'] != 'другое'
-                               ) | (
-                                   problems_df['Связанные_действия'].apply(
-                                       lambda x: any(verb in str(x) for verb in self.problem_verbs)
-                                   )
-                               )
-            else:
-                problem_mask = problems_df['Тип_проблемы'] != 'другое'
+            complexity_score = scorer.compute()
 
-            filtered_problems = problems_df[problem_mask]
+            problem_candidates.append({
+                'Проблема': obj,
+                'Тип_проблемы': problem_type,
+                'Частота_упоминаний': count,
+                'Количество_субъектов': len(related_subjects),
+                'Количество_действий': unique_actions,            
+                'Количество_связей': relations_count,             
+                'Плотность_подграфа': round(subgraph_density, 4), 
+                'Важность': importance_score,
+                'Complexity_score': complexity_score,             
 
-            self.problems = filtered_problems.to_dict('records')
+                # Центральности оставляем
+                'Центральность_степени': self.centrality_df[
+                    self.centrality_df['Узел'] == obj
+                ]['Degree'].values[0]
+                if hasattr(self, 'centrality_df') and obj in self.centrality_df['Узел'].values else 0,
 
-            self.logger.info(f"Идентифицировано {len(filtered_problems)} городских проблем")
+                'Центральность_посредническая': self.centrality_df[
+                    self.centrality_df['Узел'] == obj
+                ]['Betweenness'].values[0]
+                if hasattr(self, 'centrality_df') and obj in self.centrality_df['Узел'].values else 0
+            })
 
-            # Логирование топ-10 проблем
-            self.logger.info("Топ-10 наиболее важных проблем:")
-            for idx, row in filtered_problems.head(10).iterrows():
-                self.logger.info(f"  {row['Проблема']} ({row['Тип_проблемы']}): "
-                                 f"важность={row['Важность']:.2f}, "
-                                 f"упоминаний={row['Частота_упоминаний']}")
-
-            return filtered_problems
-        else:
+        if not problem_candidates:
             self.logger.warning("Не удалось идентифицировать проблемы")
             return pd.DataFrame()
+
+        problems_df = pd.DataFrame(problem_candidates)
+
+        # сортировка — ТЕПЕРЬ по комплексности
+        problems_df = problems_df.sort_values(
+            by='Complexity_score', ascending=False
+        )
+
+        self.problems = problems_df.to_dict('records')
+
+        self.logger.info(f"Идентифицировано {len(problems_df)} городских проблем")
+
+        self.logger.info("Топ-10 комплексных проблем:")
+        for _, row in problems_df.head(10).iterrows():
+            self.logger.info(
+                f"  {row['Проблема']} | "
+                f"complexity={row['Complexity_score']:.2f} | "
+                f"freq={row['Частота_упоминаний']}"
+            )
+
+        return problems_df
+
 
     def _classify_problem(self, problem: str, verbs: List[str]) -> str:
         """Классификация проблемы по типу"""

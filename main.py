@@ -1,60 +1,74 @@
 import pandas as pd
 import json
+import argparse
+
 from clean_proceccing import TextPreprocessor
 from relations_entity import UrbanProblemsGraphExtractor
 from ner_proceccing import UrbanKnowledgeGraph
+from ai_agent import run_agent   # ← обязательно импортируй
+from complex_problem_score import ComplexProblemScorer
 
-def build_agent_payload(
-    summary: dict,
-    density_metrics: dict,
-    centrality_metrics: dict,
-    problems_df: pd.DataFrame,
-    relations_df: pd.DataFrame
-) -> dict:
+# ---------- AGENT PAYLOAD ----------
+def build_agent_payload(problems_df: pd.DataFrame) -> dict:
+    """
+    Формирует payload для аналитического агента.
+    Все Complexity_score рассчитаны ПО ПРОБЛЕМАМ.
+    """
 
-    top_entities = [
-        {
-            "entity": row["entity"],
-            "degree": row["degree"],
-            "betweenness": row.get("betweenness", None)
-        }
-        for _, row in centrality_metrics["degree"].head(10).iterrows()
+    if problems_df is None or problems_df.empty:
+        return {"error": "no problems detected"}
+
+    # Берём только осмысленные поля
+    required_cols = [
+        "Проблема",
+        "Тип_проблемы",
+        "Частота_упоминаний",
+        "Количество_субъектов",
+        "Количество_действий",
+        "Плотность_подграфа",
+        "Complexity_score"
     ]
 
-    key_relations = (
-        relations_df
-        .groupby(["subject", "action", "object"])
-        .size()
-        .reset_index(name="count")
-        .sort_values("count", ascending=False)
-        .head(10)
+    problems_for_agent = (
+        problems_df
+        .sort_values("Complexity_score", ascending=False)
+        .head(20)
+        [required_cols]
+        .rename(columns={
+            "Проблема": "problem",
+            "Тип_проблемы": "type",
+            "Частота_упоминаний": "frequency",
+            "Количество_субъектов": "subjects_count",
+            "Количество_действий": "actions_count",
+            "Плотность_подграфа": "subgraph_density",
+            "Complexity_score": "complexity_score"
+        })
         .to_dict("records")
     )
 
-    problems = problems_df.head(10).to_dict("records")
-
-    return {
+    payload = {
         "meta": {
-            "records_count": int(summary.get("total_records", 0))
+            "total_problems": int(len(problems_df)),
+            "top_problems_sent": int(len(problems_for_agent))
         },
-        "graph_summary": {
-            "top_entities": top_entities,
-            "key_relations": key_relations,
-            "density": density_metrics
-        },
-        "problems": problems,
-        "signals": {
-            "entity_concentration": "high" if len(top_entities) < 5 else "medium",
-            "relation_repetition": "high" if len(key_relations) > 5 else "low"
+        "problems": problems_for_agent,
+        "statistics": {
+            "complexity_distribution": {
+                "min": float(problems_df["Complexity_score"].min()),
+                "max": float(problems_df["Complexity_score"].max()),
+                "mean": float(problems_df["Complexity_score"].mean())
+            }
         }
     }
 
+    return payload
 
-def process_items(items):
-    df = pd.DataFrame(items)
+
+# ---------- CORE PIPELINE ----------
+
+def process_items(df: pd.DataFrame) -> dict:
     print(f"Считано {len(df)} записей")
 
-    # 2️⃣ Предобработка текста
     preprocessor = TextPreprocessor(language="russian", use_lemmatization=True)
     df_processed = preprocessor.preprocess_dataframe(
         df,
@@ -64,38 +78,20 @@ def process_items(items):
         category_column=None,
     )
 
-    report = preprocessor.get_preprocessing_report(df_processed)
+    df_processed["text_lem"] = df_processed["text_lemmatized_tokens"]
 
-    # 3️⃣ Извлечение связей субъект-действие-объект
-    # Используем колонку с лемматизированными токенами
-    df_processed['text_lem'] = df_processed['text_lemmatized_tokens']
-    
     graph_extractor = UrbanProblemsGraphExtractor()
-    relations_df = graph_extractor.extract_with_context(df_processed, text_column='text_lem')
-    
-    print(f"Извлечено {len(relations_df)} уникальных связей субъект-действие-объект")
+    relations_df = graph_extractor.extract_with_context(
+        df_processed, text_column="text_lem"
+    )
 
-       # 4️⃣ Построение графа знаний и анализ NER
     knowledge_graph = UrbanKnowledgeGraph(relations_df)
-    nx_graph = knowledge_graph.build_graph()                # строим граф
-    density_metrics = knowledge_graph.calculate_density()   # рассчитываем плотность
-    centrality_metrics = knowledge_graph.calculate_centrality(top_n=20)  # центральность
-    problems_df = knowledge_graph.identify_problems(min_frequency=2)      # выявляем проблемы
-    
-        # 6️⃣ Генерация сводного отчета
-    summary = knowledge_graph.get_summary_report()
+    knowledge_graph.build_graph()
 
-    # 7️⃣ Сохраняем данные для ИИ-агента
-    output_json = "processed_for_ai.json"
-    with open(output_json, 'w', encoding='utf-8') as f:
-        json.dump({
-            "preprocessed_dataframe": json.loads(df_processed.to_json(orient='records', date_format='iso')),
-            "relations": relations_df.to_dict(orient='records'),
-            "graph_metrics": density_metrics,
-            "centrality_metrics": {k: v.to_dict('records') for k, v in centrality_metrics.items()},
-            "problems": problems_df.to_dict(orient='records'),
-            "summary": summary
-        }, f, ensure_ascii=False, indent=2)
+    density_metrics = knowledge_graph.calculate_density()
+    centrality_metrics = knowledge_graph.calculate_centrality(top_n=20)
+    problems_df = knowledge_graph.identify_problems(min_frequency=2)
+    summary = knowledge_graph.get_summary_report()
 
     agent_payload = build_agent_payload(
         summary,
@@ -105,9 +101,41 @@ def process_items(items):
         relations_df
     )
 
-    with open("agent_payload.json", "w", encoding="utf-8") as f:
-        json.dump(agent_payload, f, ensure_ascii=False, indent=2)
+    agent_result = run_agent(agent_payload)
 
+    return {
+        "agent_payload": agent_payload,
+        "agent_result": agent_result
+    }
+
+# ---------- CLI ENTRYPOINT ----------
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Анализ городских обращений и выявление комплексных проблем"
+    )
+    parser.add_argument(
+        "--input",
+        type=str,
+        default="data_voronesh.xlsx",
+        help="Путь к Excel файлу с обращениями"
+    )
+
+    args = parser.parse_args()
+
+    df = pd.read_excel(args.input)
+
+    result = process_items(df)
+
+    with open("agent_payload.json", "w", encoding="utf-8") as f:
+        json.dump(result["agent_payload"], f, ensure_ascii=False, indent=2)
+
+    with open("final_agent_report.json", "w", encoding="utf-8") as f:
+        json.dump(result["agent_result"], f, ensure_ascii=False, indent=2)
+
+    print("✅ Анализ завершён. Результаты сохранены.")
+
+# ---------- RUN ----------
 
 if __name__ == "__main__":
     main()
