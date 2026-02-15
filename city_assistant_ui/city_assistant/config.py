@@ -5,7 +5,7 @@ import os
 @dataclass(frozen=True)
 class AppConfig:
     # корень артефактов
-    artifacts_root: str = os.getenv("ARTIFACTS_ROOT", "artifacts")
+    artifacts_root: str = os.getenv("ARTIFACTS_ROOT", "city_assistant_ui/artifacts")
 
     # сценарий по умолчанию
     scenario_id: str = os.getenv("SCENARIO_ID", "s1_base")
