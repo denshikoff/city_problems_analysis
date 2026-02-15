@@ -1,0 +1,195 @@
+{
+  "meta": {
+    "total_problems": 2992,
+    "top_problems_sent": 20
+  },
+  "problems": [
+    {
+      "problem": "Фото",
+      "type": "проблемная_ситуация",
+      "frequency": 394,
+      "subjects_count": 156,
+      "actions_count": 92,
+      "subgraph_density": 0.2606,
+      "complexity_score": 0.896
+    },
+    {
+      "problem": "Ответ",
+      "type": "проблемная_ситуация",
+      "frequency": 521,
+      "subjects_count": 225,
+      "actions_count": 180,
+      "subgraph_density": 0.1459,
+      "complexity_score": 0.889
+    },
+    {
+      "problem": "Автобус",
+      "type": "транспорт",
+      "frequency": 342,
+      "subjects_count": 138,
+      "actions_count": 184,
+      "subgraph_density": 0.2412,
+      "complexity_score": 0.886
+    },
+    {
+      "problem": "Мусор",
+      "type": "жилищно-коммунальное",
+      "frequency": 360,
+      "subjects_count": 179,
+      "actions_count": 182,
+      "subgraph_density": 0.1914,
+      "complexity_score": 0.883
+    },
+    {
+      "problem": "Дом",
+      "type": "другое",
+      "frequency": 486,
+      "subjects_count": 260,
+      "actions_count": 292,
+      "subgraph_density": 0.1203,
+      "complexity_score": 0.881
+    },
+    {
+      "problem": "Район",
+      "type": "проблемная_ситуация",
+      "frequency": 630,
+      "subjects_count": 294,
+      "actions_count": 349,
+      "subgraph_density": 0.1008,
+      "complexity_score": 0.881
+    },
+    {
+      "problem": "Год",
+      "type": "проблемная_ситуация",
+      "frequency": 647,
+      "subjects_count": 330,
+      "actions_count": 327,
+      "subgraph_density": 0.0924,
+      "complexity_score": 0.879
+    },
+    {
+      "problem": "Ребёнок",
+      "type": "другое",
+      "frequency": 422,
+      "subjects_count": 230,
+      "actions_count": 254,
+      "subgraph_density": 0.1347,
+      "complexity_score": 0.879
+    },
+    {
+      "problem": "Адрес",
+      "type": "проблемная_ситуация",
+      "frequency": 364,
+      "subjects_count": 193,
+      "actions_count": 171,
+      "subgraph_density": 0.1687,
+      "complexity_score": 0.877
+    },
+    {
+      "problem": "Спасибо",
+      "type": "другое",
+      "frequency": 384,
+      "subjects_count": 207,
+      "actions_count": 229,
+      "subgraph_density": 0.146,
+      "complexity_score": 0.876
+    },
+    {
+      "problem": "Уважение",
+      "type": "другое",
+      "frequency": 453,
+      "subjects_count": 230,
+      "actions_count": 246,
+      "subgraph_density": 0.1127,
+      "complexity_score": 0.874
+    },
+    {
+      "problem": "Ситуация",
+      "type": "другое",
+      "frequency": 271,
+      "subjects_count": 152,
+      "actions_count": 124,
+      "subgraph_density": 0.2539,
+      "complexity_score": 0.87
+    },
+    {
+      "problem": "Маршрут",
+      "type": "проблемная_ситуация",
+      "frequency": 289,
+      "subjects_count": 122,
+      "actions_count": 160,
+      "subgraph_density": 0.2444,
+      "complexity_score": 0.864
+    },
+    {
+      "problem": "Газон",
+      "type": "проблемная_ситуация",
+      "frequency": 253,
+      "subjects_count": 146,
+      "actions_count": 156,
+      "subgraph_density": 0.2496,
+      "complexity_score": 0.863
+    },
+    {
+      "problem": "Br",
+      "type": "другое",
+      "frequency": 250,
+      "subjects_count": 144,
+      "actions_count": 183,
+      "subgraph_density": 0.2507,
+      "complexity_score": 0.862
+    },
+    {
+      "problem": "Ремонт",
+      "type": "жилищно-коммунальное",
+      "frequency": 288,
+      "subjects_count": 163,
+      "actions_count": 142,
+      "subgraph_density": 0.1983,
+      "complexity_score": 0.861
+    },
+    {
+      "problem": "Двор",
+      "type": "проблемная_ситуация",
+      "frequency": 232,
+      "subjects_count": 132,
+      "actions_count": 158,
+      "subgraph_density": 0.2646,
+      "complexity_score": 0.852
+    },
+    {
+      "problem": "Цена",
+      "type": "проблемная_ситуация",
+      "frequency": 294,
+      "subjects_count": 160,
+      "actions_count": 166,
+      "subgraph_density": 0.1643,
+      "complexity_score": 0.851
+    },
+    {
+      "problem": "Часть",
+      "type": "другое",
+      "frequency": 197,
+      "subjects_count": 114,
+      "actions_count": 140,
+      "subgraph_density": 0.3394,
+      "complexity_score": 0.848
+    },
+    {
+      "problem": "Транспорт",
+      "type": "проблемная_ситуация",
+      "frequency": 206,
+      "subjects_count": 105,
+      "actions_count": 139,
+      "subgraph_density": 0.3293,
+      "complexity_score": 0.844
+    }
+  ],
+  "statistics": {
+    "complexity_distribution": {
+      "min": 0.118,
+      "max": 0.896,
+      "mean": 0.24459191176470588
+    }
+  }
+}

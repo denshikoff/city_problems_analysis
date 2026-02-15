@@ -1,0 +1,6 @@
+networkx 
+pandas
+gensim
+nltk
+spacy
+uvicorn
