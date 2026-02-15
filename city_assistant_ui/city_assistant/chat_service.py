@@ -1,7 +1,7 @@
 import json
 import numpy as np
 import pandas as pd
-from .retrieval import retrieve_relevant_problems, normalize_text
+from city_assistant.retrieval import retrieve_relevant_problems, normalize_text
 
 
 class ChatService:
