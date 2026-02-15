@@ -10,6 +10,21 @@ st.set_page_config(page_title="Городской ИИ-помощник", layout
 st.title("Городской ИИ-помощник для служб: выявление и ранжирование проблем")
 
 cfg = AppConfig()
+from pathlib import Path
+import os
+import streamlit as st
+
+APP_DIR = Path(__file__).resolve().parent
+
+st.write("CWD:", os.getcwd())
+st.write("APP_DIR:", str(APP_DIR))
+st.write("APP_DIR contents:", [p.name for p in APP_DIR.iterdir()])
+
+art_dir = APP_DIR / "artifacts" / "s1_base"
+st.write("Scenario dir:", str(art_dir))
+st.write("Scenario exists:", art_dir.exists())
+if art_dir.exists():
+    st.write("Scenario files:", [p.name for p in art_dir.iterdir()])
 
 # 1) список сценариев
 tmp_repo = DataRepository(cfg.artifacts_root, cfg.scenario_id)
