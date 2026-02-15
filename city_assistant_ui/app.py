@@ -46,6 +46,9 @@ with st.sidebar:
     if st.button("Очистить чат"):
         st.session_state.messages = []
         st.rerun()
+st.write("Artifacts root:", cfg.artifacts_root)
+st.write("Scenario path:", problems_file)
+st.write("Exists:", agent_report_file.exists())
 
 # 2) загрузка
 problems_df = repo.load_problems(problems_file)
