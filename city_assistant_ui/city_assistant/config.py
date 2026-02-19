@@ -12,3 +12,5 @@ class AppConfig:
 
     problems_csv: str = os.getenv("PROBLEMS_CSV", "problems_with_complexity.csv")
     agent_report_json: str = os.getenv("AGENT_REPORT_JSON", "final_agent_report.json")
+    chat_mode: str = os.getenv("CHAT_MODE", "heuristic")
+    top_k_ctx_default: int = int(os.getenv("TOP_K_CTX", "10"))
