@@ -62,10 +62,8 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 st.write("Artifacts root:", cfg.artifacts_root)
-agent_report_path = Path(repo.path(agent_report_file))
-
-st.write("Agent report path:", agent_report_path)
-st.write("Exists:", agent_report_path.exists())
+st.write("Scenario path:", problems_file)
+st.write("Exists:", agent_report_file.exists())
 
 # 2) загрузка
 problems_df = repo.load_problems(problems_file)
