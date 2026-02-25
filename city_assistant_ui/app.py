@@ -87,8 +87,8 @@ st.write("Agent report path:", str(agent_report_path))
 st.write("Agent report exists:", agent_report_path.exists())
 
 # 2) загрузка
-problems_df = repo.load_problems(problems_file)
-agent_report = repo.load_json(agent_report_file)
+problems_df = repo.load_problems(str(problems_path))
+agent_report = repo.load_json(str(agent_report_path))
 
 # 3) фильтрация
 df_view = problems_df[problems_df["Complexity_score"] >= float(min_score)].copy()
