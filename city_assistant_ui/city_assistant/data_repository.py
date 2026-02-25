@@ -30,7 +30,8 @@ class DataRepository:
         return sorted([d for d in os.listdir(self.artifacts_root) if os.path.isdir(os.path.join(self.artifacts_root, d))])
 
     def load_problems(self, filename: str) -> pd.DataFrame:
-        path = self.path(filename)
+        path = filename if os.path.isabs(filename) else self.path(filename)
+    
         df = pd.read_csv(path)
 
         missing = [c for c in REQUIRED_COLS if c not in df.columns]
@@ -48,7 +49,7 @@ class DataRepository:
         return df
 
     def load_json(self, filename: str) -> dict | None:
-        path = self.path(filename)
+        path = filename if os.path.isabs(filename) else self.path(filename)
         if not os.path.exists(path):
             return None
         try:
