@@ -15,19 +15,15 @@ import os
 import streamlit as st
 
 APP_DIR = Path(__file__).resolve().parent
+ARTIFACTS_ROOT = APP_DIR / "artifacts"   # <-- ВАЖНО: абсолютный корректный root
 
 st.write("CWD:", os.getcwd())
 st.write("APP_DIR:", str(APP_DIR))
-st.write("APP_DIR contents:", [p.name for p in APP_DIR.iterdir()])
-
-art_dir = APP_DIR / "artifacts" / "s1_base"
-st.write("Scenario dir:", str(art_dir))
-st.write("Scenario exists:", art_dir.exists())
-if art_dir.exists():
-    st.write("Scenario files:", [p.name for p in art_dir.iterdir()])
+st.write("ARTIFACTS_ROOT (forced):", str(ARTIFACTS_ROOT))
+st.write("ARTIFACTS_ROOT exists:", ARTIFACTS_ROOT.exists())
 
 # 1) список сценариев
-tmp_repo = DataRepository(cfg.artifacts_root, cfg.scenario_id)
+tmp_repo = DataRepository(str(ARTIFACTS_ROOT), cfg.scenario_id)
 scenario_options = tmp_repo.list_scenarios() or [cfg.scenario_id]
 
 with st.sidebar:
@@ -62,9 +58,9 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 st.write("Artifacts root:", cfg.artifacts_root)
-agent_report_path = Path(repo.path(agent_report_file))
 
-st.write("Agent report path:", agent_report_path)
+agent_report_path = Path(repo.path(agent_report_file))
+st.write("Agent report path:", str(agent_report_path))
 st.write("Exists:", agent_report_path.exists())
 
 # 2) загрузка
