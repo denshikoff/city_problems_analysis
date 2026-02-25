@@ -1,28 +1,42 @@
+import os
+from pathlib import Path
+
 import streamlit as st
 
 from city_assistant.config import AppConfig
 from city_assistant.data_repository import DataRepository
 from city_assistant.chat_service import ChatService
 from city_assistant.ui_components import render_metrics, render_problem_table, render_problem_card
-from city_assistant.report_renderer import render_human_report  # если уже добавили
+from city_assistant.report_renderer import render_human_report
+
 
 st.set_page_config(page_title="Городской ИИ-помощник", layout="wide")
 st.title("Городской ИИ-помощник для служб: выявление и ранжирование проблем")
 
 cfg = AppConfig()
-from pathlib import Path
-import os
-import streamlit as st
 
+# --- Paths (Render-safe) ---
 APP_DIR = Path(__file__).resolve().parent
-ARTIFACTS_ROOT = APP_DIR / "artifacts"   # <-- ВАЖНО: абсолютный корректный root
+ARTIFACTS_ROOT = APP_DIR / "artifacts"  # <- фактическая папка рядом с app.py
 
+# --- Debug / diagnostics ---
 st.write("CWD:", os.getcwd())
 st.write("APP_DIR:", str(APP_DIR))
+st.write("APP_DIR contents:", [p.name for p in APP_DIR.iterdir()])
+
 st.write("ARTIFACTS_ROOT (forced):", str(ARTIFACTS_ROOT))
 st.write("ARTIFACTS_ROOT exists:", ARTIFACTS_ROOT.exists())
+if ARTIFACTS_ROOT.exists():
+    st.write("ARTIFACTS_ROOT dirs:", [p.name for p in ARTIFACTS_ROOT.iterdir()])
 
-# 1) список сценариев
+# Пример проверки конкретного сценария (по дефолту)
+default_scenario_dir = ARTIFACTS_ROOT / cfg.scenario_id
+st.write("Default scenario dir:", str(default_scenario_dir))
+st.write("Default scenario exists:", default_scenario_dir.exists())
+if default_scenario_dir.exists():
+    st.write("Default scenario files:", [p.name for p in default_scenario_dir.iterdir()])
+
+# 1) список сценариев (ВАЖНО: используем forced ARTIFACTS_ROOT)
 tmp_repo = DataRepository(str(ARTIFACTS_ROOT), cfg.scenario_id)
 scenario_options = tmp_repo.list_scenarios() or [cfg.scenario_id]
 
@@ -31,10 +45,11 @@ with st.sidebar:
     scenario_id = st.selectbox(
         "Выбери сценарий",
         options=scenario_options,
-        index=scenario_options.index(cfg.scenario_id) if cfg.scenario_id in scenario_options else 0
+        index=scenario_options.index(cfg.scenario_id) if cfg.scenario_id in scenario_options else 0,
     )
 
-    repo = DataRepository(cfg.artifacts_root, scenario_id)
+    # ВАЖНО: repo тоже на forced ARTIFACTS_ROOT, НЕ cfg.artifacts_root
+    repo = DataRepository(str(ARTIFACTS_ROOT), scenario_id)
 
     st.divider()
     st.header("Файлы")
@@ -47,7 +62,9 @@ with st.sidebar:
     st.header("Фильтры")
     min_score = st.slider("Минимальный Complexity_score", 0.0, 1.0, 0.0, 0.01)
     only_systemic = st.checkbox("Только системные (score ≥ 0.7)", value=False)
-    type_filter = st.text_input("Тип проблемы (например: транспорт / ЖКХ / инфраструктура)", value="").strip()
+    type_filter = st.text_input(
+        "Тип проблемы (например: транспорт / ЖКХ / инфраструктура)", value=""
+    ).strip()
 
     st.divider()
     st.header("Чат")
@@ -57,11 +74,17 @@ with st.sidebar:
     if st.button("Очистить чат"):
         st.session_state.messages = []
         st.rerun()
-st.write("Artifacts root:", cfg.artifacts_root)
 
+# --- More debug: show resolved file paths ---
+problems_path = Path(repo.path(problems_file))
 agent_report_path = Path(repo.path(agent_report_file))
+
+st.write("Artifacts root (forced):", str(ARTIFACTS_ROOT))
+st.write("Scenario id:", scenario_id)
+st.write("Problems path:", str(problems_path))
+st.write("Problems exists:", problems_path.exists())
 st.write("Agent report path:", str(agent_report_path))
-st.write("Exists:", agent_report_path.exists())
+st.write("Agent report exists:", agent_report_path.exists())
 
 # 2) загрузка
 problems_df = repo.load_problems(problems_file)
@@ -80,7 +103,6 @@ chat = ChatService(df_view, chat_mode=cfg.chat_mode)
 # MAIN: обзор + чат как GPT
 # --------------------------
 
-# Верх: метрики и обзор
 left, right = st.columns([2, 1])
 
 with left:
@@ -94,7 +116,6 @@ with right:
     st.divider()
     st.subheader("Отчёт агента")
     if agent_report:
-        # кнопка "человеческий отчёт"
         if st.button("Сгенерировать человекочитаемый отчёт"):
             render_human_report(agent_report)
         else:
@@ -104,7 +125,7 @@ with right:
 
 st.divider()
 
-# Карточка проблемы (по желанию — компактно на главной)
+# Карточка проблемы
 st.subheader("Карточка проблемы")
 options = df_view.sort_values("Complexity_score", ascending=False)["Проблема"].head(200).tolist()
 chosen = st.selectbox("Выбери проблему", options=options if options else ["—"])
@@ -119,12 +140,10 @@ st.subheader("Чат с помощником")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# показать историю
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
 
-# поле ввода снизу
 user_msg = st.chat_input("Спроси: «топ проблем», «почему Автобус комплексный?», «покажи транспорт»…")
 
 if user_msg:
