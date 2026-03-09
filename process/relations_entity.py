@@ -119,6 +119,59 @@ class UrbanProblemsGraphExtractor:
         
         return relations
     
+
+    def extract_entities(self, df_source: pd.DataFrame, text_column: str = "Текст") -> pd.DataFrame:
+        """
+        Извлечение NER-сущностей по каждому документу.
+        Сохраняет исходный текст сущности, метку и нормализованную форму.
+        """
+        if text_column not in df_source.columns:
+            raise ValueError(f"Колонка '{text_column}' не найдена в DataFrame")
+
+        entities = []
+        for idx, text in enumerate(df_source[text_column]):
+            if not isinstance(text, str):
+                text = "" if pd.isna(text) else str(text)
+
+            doc = self.nlp(text)
+            for ent in doc.ents:
+                norm = self._normalize_entity(ent.text)
+                entities.append({
+                    "doc_index": idx,
+                    "entity": ent.text,
+                    "entity_normalized": norm,
+                    "label": ent.label_,
+                    "start_char": ent.start_char,
+                    "end_char": ent.end_char,
+                    "context": text[max(0, ent.start_char - 80): min(len(text), ent.end_char + 80)].strip()
+                })
+
+        if not entities:
+            return pd.DataFrame(columns=[
+                "doc_index", "entity", "entity_normalized", "label",
+                "start_char", "end_char", "context"
+            ])
+
+        return pd.DataFrame(entities).drop_duplicates().reset_index(drop=True)
+
+    def get_entity_statistics(self, entities_df: pd.DataFrame, top_n: int = 100) -> pd.DataFrame:
+        """Агрегированная статистика по сущностям NER."""
+        if entities_df is None or entities_df.empty:
+            return pd.DataFrame(columns=["entity_normalized", "label", "count", "documents_count"])
+
+        stats = (
+            entities_df.groupby(["entity_normalized", "label"], dropna=False)
+            .agg(
+                count=("entity", "size"),
+                documents_count=("doc_index", pd.Series.nunique),
+                variants=("entity", lambda s: sorted(set(map(str, s)))[:10])
+            )
+            .reset_index()
+            .sort_values(["count", "documents_count"], ascending=False)
+            .head(top_n)
+        )
+        return stats
+
     def extract_relations(self, df_source: pd.DataFrame, text_column: str = "text_lem") -> pd.DataFrame:
         """
         Основной метод извлечения отношений из DataFrame

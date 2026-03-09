@@ -491,104 +491,258 @@ class UrbanKnowledgeGraph:
 
         return importance
 
-    def visualize_graph(self, top_problems: int = 15, figsize: Tuple = (15, 10)):
-        """
-        Визуализация графа с выделением проблем
-
-        Args:
-            top_problems: Количество топ-проблем для визуализации
-            figsize: Размер фигуры
-        """
-        self.logger.info(f"Визуализация графа (топ-{top_problems} проблем)")
-
+    def _build_focus_subgraph(
+        self,
+        top_problems: int = 10,
+        top_subjects_per_problem: int = 5,
+        central_nodes: int = 20,
+        min_problem_frequency: int = 2,
+        min_edge_weight: int = 1,
+    ) -> nx.DiGraph:
+        """Собирает компактный подграф для визуализации основных сущностей."""
         if self.graph.number_of_nodes() == 0:
-            self.logger.warning("Граф пустой, невозможна визуализация")
-            return
+            return nx.DiGraph()
 
-        # Получение топ-проблем
+        if not hasattr(self, 'problems') or len(self.problems) == 0:
+            problems_df = self.identify_problems(min_frequency=min_problem_frequency)
+        else:
+            problems_df = pd.DataFrame(self.problems)
+
+        if problems_df is None or problems_df.empty:
+            return nx.DiGraph()
+
+        if not hasattr(self, 'centrality_df') or self.centrality_df.empty:
+            self.calculate_centrality(top_n=max(central_nodes, 20))
+
+        top_problems_list = problems_df.head(top_problems)['Проблема'].tolist()
+        nodes_to_include = set(top_problems_list)
+
+        for problem in top_problems_list:
+            related_rows = self.relations_df[self.relations_df['Объект'] == problem].copy()
+            if related_rows.empty:
+                continue
+
+            subject_rank = (
+                related_rows['Субъект']
+                .value_counts()
+                .head(top_subjects_per_problem)
+                .index
+                .tolist()
+            )
+            nodes_to_include.update(subject_rank)
+
+        if hasattr(self, 'centrality_df') and not self.centrality_df.empty:
+            top_central_nodes = (
+                self.centrality_df
+                .sort_values(['Betweenness', 'Degree'], ascending=False)
+                .head(central_nodes)['Узел']
+                .tolist()
+            )
+            nodes_to_include.update(top_central_nodes)
+
+        filtered = self.relations_df[
+            self.relations_df['Субъект'].isin(nodes_to_include) |
+            self.relations_df['Объект'].isin(nodes_to_include)
+        ].copy()
+
+        if filtered.empty:
+            return nx.DiGraph()
+
+        edge_weights = (
+            filtered
+            .groupby(['Субъект', 'Объект'])
+            .agg(
+                weight=('Связь', 'size'),
+                relations=('Связь', lambda x: ', '.join(pd.Series(x).value_counts().head(3).index.tolist()))
+            )
+            .reset_index()
+        )
+        edge_weights = edge_weights[edge_weights['weight'] >= min_edge_weight]
+
+        G = nx.DiGraph()
+        for _, row in edge_weights.iterrows():
+            subj = row['Субъект']
+            obj = row['Объект']
+            G.add_node(subj, **self.graph.nodes.get(subj, {}))
+            G.add_node(obj, **self.graph.nodes.get(obj, {}))
+            G.add_edge(subj, obj, weight=int(row['weight']), relations=row['relations'])
+
+        isolates = list(nx.isolates(G))
+        G.remove_nodes_from(isolates)
+        return G
+
+    def visualize_graph(
+        self,
+        top_problems: int = 10,
+        top_subjects_per_problem: int = 5,
+        central_nodes: int = 20,
+        label_top_n: int = 25,
+        min_problem_frequency: int = 2,
+        min_edge_weight: int = 1,
+        figsize: Tuple = (16, 11),
+        output_path: Optional[str] = None,
+        show: bool = False,
+    ):
+        """
+        Компактная визуализация: показывает только ключевые проблемы, важные субъекты
+        и центральные узлы, а не весь граф целиком.
+        """
+        self.logger.info(
+            f"Компактная визуализация графа: problems={top_problems}, "
+            f"subjects_per_problem={top_subjects_per_problem}, central_nodes={central_nodes}"
+        )
+
+        focus_graph = self._build_focus_subgraph(
+            top_problems=top_problems,
+            top_subjects_per_problem=top_subjects_per_problem,
+            central_nodes=central_nodes,
+            min_problem_frequency=min_problem_frequency,
+            min_edge_weight=min_edge_weight,
+        )
+
+        if focus_graph.number_of_nodes() == 0:
+            self.logger.warning("Не удалось собрать информативный подграф для визуализации")
+            return None
+
+        plt.figure(figsize=figsize)
+        pos = nx.spring_layout(
+            focus_graph,
+            k=1.4 / max(np.sqrt(focus_graph.number_of_nodes()), 1),
+            iterations=200,
+            seed=42,
+        )
+
+        if hasattr(self, 'problems') and len(self.problems) > 0:
+            problems_df = pd.DataFrame(self.problems)
+            problem_nodes = set(problems_df.head(top_problems)['Проблема'].tolist())
+        else:
+            problem_nodes = set()
+
+        subject_nodes = {
+            n for n, data in focus_graph.nodes(data=True)
+            if data.get('type') == 'субъект' and n not in problem_nodes
+        }
+        other_nodes = set(focus_graph.nodes()) - problem_nodes - subject_nodes
+
+        ranked_nodes = []
+        if hasattr(self, 'centrality_df') and not self.centrality_df.empty:
+            ranked_nodes = (
+                self.centrality_df[
+                    self.centrality_df['Узел'].isin(focus_graph.nodes())
+                ]
+                .sort_values(['Betweenness', 'Degree'], ascending=False)['Узел']
+                .tolist()
+            )
+
+        top_labeled_nodes = set(ranked_nodes[:label_top_n]) | set(list(problem_nodes)[:top_problems])
+
+        node_size_map = {}
+        centrality_lookup = {}
+        if hasattr(self, 'centrality_df') and not self.centrality_df.empty:
+            centrality_lookup = dict(zip(self.centrality_df['Узел'], self.centrality_df['Degree']))
+
+        for node in focus_graph.nodes():
+            degree_score = centrality_lookup.get(node, 0)
+            node_size_map[node] = 500 + degree_score * 12000
+            if node in problem_nodes:
+                node_size_map[node] *= 1.25
+
+        nx.draw_networkx_nodes(
+            focus_graph, pos,
+            nodelist=list(problem_nodes),
+            node_color='red',
+            node_size=[node_size_map[n] for n in problem_nodes],
+            alpha=0.85,
+            label='Проблемы'
+        )
+        nx.draw_networkx_nodes(
+            focus_graph, pos,
+            nodelist=list(subject_nodes),
+            node_color='royalblue',
+            node_size=[node_size_map[n] for n in subject_nodes],
+            alpha=0.75,
+            label='Субъекты'
+        )
+        nx.draw_networkx_nodes(
+            focus_graph, pos,
+            nodelist=list(other_nodes),
+            node_color='lightgray',
+            node_size=[node_size_map[n] for n in other_nodes],
+            alpha=0.55,
+            label='Другие'
+        )
+
+        edge_widths = [0.8 + 0.7 * focus_graph[u][v].get('weight', 1) for u, v in focus_graph.edges()]
+        nx.draw_networkx_edges(
+            focus_graph, pos,
+            width=edge_widths,
+            alpha=0.35,
+            arrows=True,
+            arrowstyle='-|>',
+            arrowsize=12,
+            connectionstyle='arc3,rad=0.08'
+        )
+
+        labels = {node: node for node in focus_graph.nodes() if node in top_labeled_nodes}
+        nx.draw_networkx_labels(focus_graph, pos, labels, font_size=9)
+
+        plt.title(
+            f'Ключевой подграф городских проблем: {focus_graph.number_of_nodes()} узлов / '
+            f'{focus_graph.number_of_edges()} ребер',
+            fontsize=15
+        )
+        plt.legend(scatterpoints=1)
+        plt.axis('off')
+        plt.tight_layout()
+
+        if output_path is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = f"urban_problems_focus_graph_{timestamp}.png"
+
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        if show:
+            plt.show()
+        else:
+            plt.close()
+
+        self.logger.info(f"Компактный граф сохранен как {output_path}")
+        return output_path
+
+    def export_problem_snapshots(
+        self,
+        top_n: int = 12,
+        max_subjects: int = 8,
+        output_dir: str = '.'
+    ) -> pd.DataFrame:
+        """Экспортирует таблицу по топ-проблемам для НИР и приложений."""
         if not hasattr(self, 'problems') or len(self.problems) == 0:
             problems_df = self.identify_problems()
         else:
             problems_df = pd.DataFrame(self.problems)
 
-        if len(problems_df) == 0:
-            self.logger.warning("Нет проблем для визуализации")
-            return
+        if problems_df is None or problems_df.empty:
+            return pd.DataFrame()
 
-        top_problems_list = problems_df.head(top_problems)['Проблема'].tolist()
+        rows = []
+        for _, row in problems_df.head(top_n).iterrows():
+            problem = row['Проблема']
+            related = self.relations_df[self.relations_df['Объект'] == problem]
+            top_subjects = related['Субъект'].value_counts().head(max_subjects)
+            top_relations = related['Связь'].value_counts().head(5)
+            rows.append({
+                'Проблема': problem,
+                'Тип_проблемы': row.get('Тип_проблемы'),
+                'Complexity_score': row.get('Complexity_score'),
+                'Частота_упоминаний': row.get('Частота_упоминаний'),
+                'Топ_субъекты': '; '.join([f"{idx} ({val})" for idx, val in top_subjects.items()]),
+                'Топ_связи': '; '.join([f"{idx} ({val})" for idx, val in top_relations.items()]),
+            })
 
-        # Создание подграфа с топ-проблемами и связанными узлами
-        nodes_to_include = set(top_problems_list)
-
-        for problem in top_problems_list:
-            # Добавляем соседей проблем
-            if problem in self.graph:
-                neighbors = list(self.graph.neighbors(problem)) + \
-                            list(self.graph.predecessors(problem))
-                nodes_to_include.update(neighbors)
-
-        subgraph = self.graph.subgraph(nodes_to_include)
-
-        # Визуализация
-        plt.figure(figsize=figsize)
-
-        # Позиционирование узлов
-        pos = nx.spring_layout(subgraph, k=1, iterations=50)
-
-        # Разделение узлов по типам
-        problem_nodes = [n for n in subgraph.nodes() if n in top_problems_list]
-        subject_nodes = [n for n in subgraph.nodes()
-                         if n not in top_problems_list and
-                         self.graph.nodes[n].get('type') == 'субъект']
-        other_nodes = [n for n in subgraph.nodes()
-                       if n not in top_problems_list and
-                       n not in subject_nodes]
-
-        # Размер узлов на основе центральности
-        node_sizes = []
-        for node in subgraph.nodes():
-            if node in self.centrality_df['Узел'].values:
-                centrality = self.centrality_df[
-                    self.centrality_df['Узел'] == node
-                    ]['Degree'].values[0]
-                node_sizes.append(300 + centrality * 5000)
-            else:
-                node_sizes.append(300)
-
-        # Рисование графа
-        nx.draw_networkx_nodes(subgraph, pos, nodelist=problem_nodes,
-                               node_color='red', node_size=[node_sizes[list(subgraph.nodes()).index(n)]
-                                                            for n in problem_nodes],
-                               alpha=0.8, label='Проблемы')
-        nx.draw_networkx_nodes(subgraph, pos, nodelist=subject_nodes,
-                               node_color='blue', node_size=[node_sizes[list(subgraph.nodes()).index(n)]
-                                                             for n in subject_nodes],
-                               alpha=0.6, label='Субъекты')
-        nx.draw_networkx_nodes(subgraph, pos, nodelist=other_nodes,
-                               node_color='gray', node_size=[node_sizes[list(subgraph.nodes()).index(n)]
-                                                             for n in other_nodes],
-                               alpha=0.4, label='Другие')
-
-        # Рисование ребер
-        nx.draw_networkx_edges(subgraph, pos, alpha=0.3, arrows=True, arrowstyle='->')
-
-        # Подписи узлов
-        labels = {node: node for node in subgraph.nodes()}
-        nx.draw_networkx_labels(subgraph, pos, labels, font_size=9,
-                                font_family='sans-serif')
-
-        plt.title(f'Граф городских проблем (топ-{top_problems})', fontsize=16)
-        plt.legend(scatterpoints=1)
-        plt.axis('off')
-
-        # Сохранение графика
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"urban_problems_graph_{timestamp}.png"
-        plt.tight_layout()
-        plt.savefig(filename, dpi=300, bbox_inches='tight')
-        plt.show()
-
-        self.logger.info(f"Граф сохранен как {filename}")
+        snapshot_df = pd.DataFrame(rows)
+        snapshot_path = f"{output_dir.rstrip('/')}/problem_snapshots.csv"
+        snapshot_df.to_csv(snapshot_path, index=False, encoding='utf-8-sig')
+        self.logger.info(f"Снимки проблем сохранены в {snapshot_path}")
+        return snapshot_df
 
     def get_summary_report(self) -> Dict:
         """
