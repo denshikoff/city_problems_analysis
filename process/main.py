@@ -1,271 +1,64 @@
-import argparse
-import json
+from __future__ import annotations
+import argparse, json
 from pathlib import Path
 from typing import Any, Dict, Optional
-
 import pandas as pd
-
 from clean_proceccing import TextPreprocessor
 from relations_entity import UrbanProblemsGraphExtractor
 from ner_proceccing import UrbanKnowledgeGraph
+from candidate_builder import ProblemCandidateBuilder
+from llm_service import LLMService
 from ai_agent import run_agent
 
-
-# ---------- IO HELPERS ----------
-
-def ensure_dir(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 class ArtifactSaver:
-    """Сохраняет промежуточные артефакты пайплайна в удобных форматах."""
-
-    def __init__(self, output_dir: str | Path = "artifacts"):
-        self.output_dir = ensure_dir(Path(output_dir))
-        self.tables_dir = ensure_dir(self.output_dir / "tables")
-        self.json_dir = ensure_dir(self.output_dir / "json")
-        self.graphs_dir = ensure_dir(self.output_dir / "graphs")
-        self.debug_dir = ensure_dir(self.output_dir / "debug")
-
-    def save_dataframe(self, df: pd.DataFrame, name: str) -> Dict[str, str]:
-        paths: Dict[str, str] = {}
-        csv_path = self.tables_dir / f"{name}.csv"
-        df.to_csv(csv_path, index=False, encoding="utf-8-sig")
-        paths["csv"] = str(csv_path)
-
-        try:
-            xlsx_path = self.tables_dir / f"{name}.xlsx"
-            df.to_excel(xlsx_path, index=False)
-            paths["xlsx"] = str(xlsx_path)
-        except Exception as exc:
-            paths["xlsx_error"] = str(exc)
-
+    def __init__(self, output_dir):
+        self.output_dir=Path(output_dir); self.tables_dir=self.output_dir/"tables"; self.json_dir=self.output_dir/"json"; self.graphs_dir=self.output_dir/"graphs"
+        for p in [self.output_dir,self.tables_dir,self.json_dir,self.graphs_dir]: p.mkdir(parents=True,exist_ok=True)
+    def save_dataframe(self,df,name):
+        paths={}; csv=self.tables_dir/f"{name}.csv"; df.to_csv(csv,index=False,encoding="utf-8-sig"); paths["csv"]=str(csv)
+        try: xlsx=self.tables_dir/f"{name}.xlsx"; df.to_excel(xlsx,index=False); paths["xlsx"]=str(xlsx)
+        except Exception as e: paths["xlsx_error"]=str(e)
         return paths
+    def save_json(self,data,name):
+        p=self.json_dir/f"{name}.json"; p.write_text(json.dumps(data,ensure_ascii=False,indent=2,default=str),encoding="utf-8"); return str(p)
+    def save_jsonl_candidates(self,cands,name="problem_candidates"): return ProblemCandidateBuilder.save_jsonl(cands,self.json_dir/f"{name}.jsonl")
 
-    def save_json(self, data: Any, name: str) -> str:
-        path = self.json_dir / f"{name}.json"
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-        return str(path)
+def read_dataset(path,nrows=None):
+    p=Path(path)
+    if p.suffix.lower() in [".xlsx",".xls"]: return pd.read_excel(p,nrows=nrows)
+    if p.suffix.lower()==".csv": return pd.read_csv(p,nrows=nrows)
+    raise ValueError("Поддерживаются .xlsx/.xls/.csv")
 
-    def save_text(self, text: str, name: str) -> str:
-        path = self.debug_dir / f"{name}.txt"
-        path.write_text(text, encoding="utf-8")
-        return str(path)
+def add_summaries(candidates, run_llm=False):
+    service=LLMService(backend="ollama" if run_llm else "heuristic")
+    for c in candidates: c.llm_summary=service.summarize_candidate(c.to_dict())
+    return candidates
 
+def build_agent_payload(candidates):
+    rows=[c.to_dict() for c in candidates]; scores=[float(x.get("complexity_score") or 0) for x in rows]
+    return {"meta":{"total_candidates":len(rows),"top_sent":min(20,len(rows))},"candidates":rows[:20],"statistics":{"complexity_distribution":{"min":min(scores) if scores else 0,"max":max(scores) if scores else 0,"mean":sum(scores)/len(scores) if scores else 0}}}
 
-# ---------- AGENT PAYLOAD ----------
-def build_agent_payload(problems_df: pd.DataFrame) -> dict:
-    """Формирует payload для аналитического агента только из таблицы проблем."""
-    if problems_df is None or problems_df.empty:
-        return {"error": "no problems detected"}
+def process_items(df:pd.DataFrame, output_dir="artifacts/default", *, text_column:Optional[str]=None, date_column:Optional[str]=None, address_column:Optional[str]=None, category_column:Optional[str]=None, max_rows:Optional[int]=None, min_appeals:int=3, min_relations:int=5, max_candidates:int=200, run_llm:bool=False)->Dict[str,Any]:
+    saver=ArtifactSaver(output_dir); idx={"output_dir":str(saver.output_dir),"steps":{}}
+    idx["steps"]["raw_dataset"]=saver.save_dataframe(df.head(max_rows) if max_rows else df,"00_raw_dataset")
+    pre=TextPreprocessor(use_lemmatization=True); dfd=pre.preprocess_dataframe(df,text_column,date_column,address_column,category_column,max_rows=max_rows)
+    idx["column_mapping"]={"text":dfd["source_text_column"].iloc[0] if len(dfd) else text_column,"date":dfd["source_date_column"].iloc[0] if len(dfd) else date_column,"address":dfd["source_address_column"].iloc[0] if len(dfd) else address_column,"category":dfd["source_category_column"].iloc[0] if len(dfd) else category_column}
+    idx["steps"]["cleaned_dataset"]=saver.save_dataframe(dfd,"01_cleaned_dataset"); idx["steps"]["preprocessing_report"]=saver.save_json(pre.get_preprocessing_report(dfd),"01_preprocessing_report")
+    ext=UrbanProblemsGraphExtractor(); ent=ext.extract_entities(dfd); rel=ext.extract_with_context(dfd); stat=ext.get_entity_statistics(ent)
+    idx["steps"]["entities"]=saver.save_dataframe(ent,"02_entities"); idx["steps"]["entity_statistics"]=saver.save_dataframe(stat,"02_entity_statistics"); idx["steps"]["relations"]=saver.save_dataframe(rel,"03_relations")
+    kg=UrbanKnowledgeGraph(rel,processed_df=dfd); kg.build_graph(); density=kg.calculate_density(); kg.calculate_centrality(top_n=30); kg.identify_problems(min_frequency=min_appeals,min_relations=min_relations,max_candidates=max_candidates)
+    candidates=add_summaries(kg.candidates,run_llm=run_llm); cand_df=ProblemCandidateBuilder.to_dataframe(candidates)
+    idx["steps"]["graph_density"]=saver.save_json(density,"04_graph_density"); idx["steps"]["graph_summary"]=saver.save_json(kg.get_summary_report(),"04_graph_summary")
+    if not kg.centrality_df.empty: idx["steps"]["centrality_full"]=saver.save_dataframe(kg.centrality_df,"04_centrality_full")
+    idx["steps"]["problem_candidates_csv"]=saver.save_dataframe(cand_df,"05_problem_candidates"); idx["steps"]["problem_candidates_jsonl"]=saver.save_jsonl_candidates(candidates); idx["steps"]["graph_exports"]=kg.export_graph_artifacts(saver.graphs_dir)
+    payload=build_agent_payload(candidates); idx["steps"]["agent_payload"]=saver.save_json(payload,"06_agent_payload"); idx["steps"]["agent_result"]=saver.save_json(run_agent(payload),"06_final_agent_report")
+    artifact_index_path=saver.save_json(idx,"artifact_index")
+    return {"df_processed":dfd,"entities_df":ent,"relations_df":rel,"candidates":candidates,"problems_df":cand_df,"artifact_index":idx,"artifact_index_path":artifact_index_path}
 
-    required_cols = [
-        "Проблема",
-        "Тип_проблемы",
-        "Частота_упоминаний",
-        "Количество_субъектов",
-        "Количество_действий",
-        "Плотность_подграфа",
-        "Complexity_score",
-    ]
-
-    safe_df = problems_df.copy()
-    for col in required_cols:
-        if col not in safe_df.columns:
-            safe_df[col] = None
-
-    problems_for_agent = (
-        safe_df.sort_values("Complexity_score", ascending=False)
-        .head(20)[required_cols]
-        .rename(
-            columns={
-                "Проблема": "problem",
-                "Тип_проблемы": "type",
-                "Частота_упоминаний": "frequency",
-                "Количество_субъектов": "subjects_count",
-                "Количество_действий": "actions_count",
-                "Плотность_подграфа": "subgraph_density",
-                "Complexity_score": "complexity_score",
-            }
-        )
-        .to_dict("records")
-    )
-
-    return {
-        "meta": {
-            "total_problems": int(len(safe_df)),
-            "top_problems_sent": int(len(problems_for_agent)),
-        },
-        "problems": problems_for_agent,
-        "statistics": {
-            "complexity_distribution": {
-                "min": float(safe_df["Complexity_score"].min()),
-                "max": float(safe_df["Complexity_score"].max()),
-                "mean": float(safe_df["Complexity_score"].mean()),
-            }
-        },
-    }
-
-
-# ---------- CORE PIPELINE ----------
-def process_items(
-    df: pd.DataFrame,
-    output_dir: str = "artifacts",
-    run_llm_agent: bool = True,
-    graph_top_problems: int = 15,
-) -> dict:
-    print(f"Считано {len(df)} записей")
-    saver = ArtifactSaver(output_dir)
-    artifact_index: Dict[str, Any] = {"output_dir": str(saver.output_dir), "steps": {}}
-
-    # 0. Исходный датасет
-    artifact_index["steps"]["raw_dataset"] = saver.save_dataframe(df, "00_raw_dataset")
-
-    # 1. Очистка / фичи
-    preprocessor = TextPreprocessor(language="russian", use_lemmatization=True)
-    df_processed = preprocessor.preprocess_dataframe(
-        df,
-        text_column="Текст",
-        date_column="Дата создания",
-        address_column="Улица",
-        category_column=None,
-    )
-    df_processed["text_lem"] = df_processed["text_lemmatized_tokens"]
-
-    artifact_index["steps"]["cleaned_dataset"] = saver.save_dataframe(df_processed, "01_cleaned_dataset")
-    artifact_index["steps"]["preprocessing_report"] = saver.save_json(
-        preprocessor.get_preprocessing_report(df_processed),
-        "01_preprocessing_report",
-    )
-
-    # 2. NER / сущности
-    graph_extractor = UrbanProblemsGraphExtractor()
-    entities_df = graph_extractor.extract_entities(df_processed, text_column="Текст")
-    entity_stats_df = graph_extractor.get_entity_statistics(entities_df)
-    artifact_index["steps"]["entities"] = saver.save_dataframe(entities_df, "02_entities_ner")
-    artifact_index["steps"]["entity_statistics"] = saver.save_dataframe(entity_stats_df, "02_entity_statistics")
-
-    # 3. Relations
-    relations_df = graph_extractor.extract_with_context(df_processed, text_column="text_lem")
-    artifact_index["steps"]["relations"] = saver.save_dataframe(relations_df, "03_relations_with_context")
-
-    # 4. Knowledge graph + metrics
-    knowledge_graph = UrbanKnowledgeGraph(relations_df)
-    knowledge_graph.build_graph()
-
-    density_metrics = knowledge_graph.calculate_density()
-    centrality_metrics = knowledge_graph.calculate_centrality(top_n=20)
-    problems_df = knowledge_graph.identify_problems(min_frequency=2)
-    summary = knowledge_graph.get_summary_report()
-    community_info = knowledge_graph.analyze_communities()
-
-    artifact_index["steps"]["graph_summary"] = saver.save_json(summary, "04_graph_summary")
-    artifact_index["steps"]["graph_density"] = saver.save_json(density_metrics, "04_graph_density")
-
-    if getattr(knowledge_graph, "centrality_df", None) is not None and not knowledge_graph.centrality_df.empty:
-        artifact_index["steps"]["centrality_full"] = saver.save_dataframe(
-            knowledge_graph.centrality_df, "04_centrality_full"
-        )
-
-    centrality_top_index: Dict[str, Dict[str, str]] = {}
-    for metric_name, metric_df in centrality_metrics.items():
-        centrality_top_index[metric_name] = saver.save_dataframe(metric_df, f"04_{metric_name}")
-    artifact_index["steps"]["centrality_top"] = centrality_top_index
-
-    artifact_index["steps"]["problems"] = saver.save_dataframe(problems_df, "05_problems")
-
-    if community_info:
-        if isinstance(community_info.get("stats"), pd.DataFrame):
-            artifact_index["steps"]["communities_stats"] = saver.save_dataframe(
-                community_info["stats"], "05_communities_stats"
-            )
-        artifact_index["steps"]["communities_json"] = saver.save_json(
-            {
-                "method": community_info.get("method"),
-                "communities": community_info.get("communities", {}),
-            },
-            "05_communities",
-        )
-
-    graph_exports = knowledge_graph.export_graph_artifacts(
-        output_dir=saver.graphs_dir,
-        top_problems=graph_top_problems,
-        centrality_df=knowledge_graph.centrality_df,
-    )
-    artifact_index["steps"]["graph_exports"] = graph_exports
-
-    # 5. Agent
-    agent_payload = build_agent_payload(problems_df)
-    artifact_index["steps"]["agent_payload"] = saver.save_json(agent_payload, "06_agent_payload")
-
-    agent_result: Dict[str, Any]
-    if run_llm_agent and "error" not in agent_payload:
-        agent_result = run_agent(agent_payload)
-    else:
-        agent_result = {"skipped": True, "reason": "disabled or no problems detected"}
-
-    artifact_index["steps"]["agent_result"] = saver.save_json(agent_result, "06_final_agent_report")
-    artifact_index_path = saver.save_json(artifact_index, "artifact_index")
-
-    return {
-        "df_processed": df_processed,
-        "entities_df": entities_df,
-        "entity_stats_df": entity_stats_df,
-        "relations_df": relations_df,
-        "problems_df": problems_df,
-        "summary": summary,
-        "agent_payload": agent_payload,
-        "agent_result": agent_result,
-        "artifact_index": artifact_index,
-        "artifact_index_path": artifact_index_path,
-    }
-
-
-# ---------- CLI ENTRYPOINT ----------
 def main():
-    parser = argparse.ArgumentParser(
-        description="Анализ городских обращений и выявление комплексных проблем"
-    )
-    parser.add_argument(
-        "--input",
-        type=str,
-        default="data_all.xlsx",
-        help="Путь к Excel файлу с обращениями",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="artifacts",
-        help="Каталог для сохранения всех промежуточных и итоговых артефактов",
-    )
-    parser.add_argument(
-        "--skip-agent",
-        action="store_true",
-        help="Не запускать локальную LLM-модель для финального отчёта",
-    )
-    parser.add_argument(
-        "--graph-top-problems",
-        type=int,
-        default=15,
-        help="Сколько топ-проблем включать в PNG визуализацию графа",
-    )
-
-    args = parser.parse_args()
-
-    df = pd.read_excel(args.input)
-    result = process_items(
-        df,
-        output_dir=args.output_dir,
-        run_llm_agent=not args.skip_agent,
-        graph_top_problems=args.graph_top_problems,
-    )
-
-    print("✅ Анализ завершён. Результаты сохранены.")
-    print(f"📁 Каталог артефактов: {args.output_dir}")
-    print(f"🧾 Индекс артефактов: {result['artifact_index_path']}")
-
-
-if __name__ == "__main__":
-    main()
+    p=argparse.ArgumentParser(description="Анализ городских обращений и кандидаты комплексных проблем")
+    p.add_argument("--input",default="data_all.xlsx"); p.add_argument("--output-dir",default="city_assistant_ui/artifacts/default"); p.add_argument("--text-column"); p.add_argument("--date-column"); p.add_argument("--address-column"); p.add_argument("--category-column"); p.add_argument("--max-rows",type=int); p.add_argument("--min-appeals",type=int,default=3); p.add_argument("--min-relations",type=int,default=5); p.add_argument("--max-candidates",type=int,default=200); p.add_argument("--run-llm",action="store_true")
+    a=p.parse_args(); df=read_dataset(a.input,nrows=a.max_rows)
+    res=process_items(df,output_dir=a.output_dir,text_column=a.text_column,date_column=a.date_column,address_column=a.address_column,category_column=a.category_column,min_appeals=a.min_appeals,min_relations=a.min_relations,max_candidates=a.max_candidates,run_llm=a.run_llm)
+    print("✅ Анализ завершен"); print(f"Артефакты: {a.output_dir}"); print(f"Кандидатов КП: {len(res['candidates'])}"); print(f"Индекс: {res['artifact_index_path']}")
+if __name__=="__main__": main()

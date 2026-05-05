@@ -1,53 +1,18 @@
-import numpy as np
-import pandas as pd
+from __future__ import annotations
+from typing import Any, Dict
 import streamlit as st
 
-
-def render_metrics(df: pd.DataFrame):
-    total = len(df)
-    systemic = int((df["Complexity_score"] >= 0.7).sum()) if total else 0
-    st.metric("Проблем (после фильтров)", total)
-    st.metric("Системных (score ≥ 0.7)", systemic)
-    st.metric("Средняя комплексность", f"{df['Complexity_score'].mean():.3f}" if total else "—")
-    st.metric("P90 комплексности", f"{np.percentile(df['Complexity_score'], 90):.3f}" if total else "—")
-
-
-def render_problem_table(df: pd.DataFrame, n: int = 30):
-    cols = [
-        "Проблема",
-        "Тип_проблемы",
-        "Частота_упоминаний",
-        "Количество_субъектов",
-        "Количество_действий",
-        "Плотность_подграфа",
-        "Complexity_score",
-    ]
-    st.dataframe(df.sort_values("Complexity_score", ascending=False).head(n)[cols], use_container_width=True, height=520)
-
-
-def render_problem_card(df: pd.DataFrame, problem_name: str):
-    row = df[df["Проблема"] == problem_name].sort_values("Complexity_score", ascending=False).head(1)
-    if row.empty:
-        st.info("Проблема не найдена в текущих фильтрах.")
-        return
-    r = row.iloc[0]
-    left, right = st.columns([2, 1])
-    with left:
-        st.markdown(f"### {r['Проблема']}")
-        st.write(f"**Тип:** {r['Тип_проблемы']}")
-        st.write(f"**Complexity_score:** {r['Complexity_score']:.3f}")
-        st.write(
-            f"**Частота:** {int(r['Частота_упоминаний'])} · "
-            f"**Субъекты:** {int(r['Количество_субъектов'])} · "
-            f"**Действия:** {int(r['Количество_действий'])} · "
-            f"**Плотность:** {float(r['Плотность_подграфа']):.3f}"
-        )
-        st.caption("Дальше сюда добавим: примеры обращений и объяснение факторов score.")
-    with right:
-        st.markdown("### Рекомендации (MVP)")
-        for t in [
-            "Если субъектов много → нужна координация нескольких служб.",
-            "Если действий много → вероятно, проблема распадается на подпроцессы.",
-            "Высокая плотность → тесно связанная система причин/следствий.",
-        ]:
-            st.write("• " + t)
+def render_problem_card(c:Dict[str,Any], expanded=False):
+    title=c.get("title") or c.get("Проблема") or "Проблема"; cid=c.get("candidate_id") or ""; m=c.get("metrics",{}) or {}
+    with st.expander(f"{cid} · {title}", expanded=expanded):
+        cols=st.columns(4); cols[0].metric("Complexity_score",f"{float(c.get('complexity_score') or 0):.3f}"); cols[1].metric("Обращений",int(m.get("frequency") or len(c.get("appeal_ids",[])) or 0)); cols[2].metric("Связей",int(m.get("relations_count") or 0)); cols[3].metric("Плотность",f"{float(m.get('subgraph_density') or 0):.3f}")
+        s=c.get("llm_summary") or {}
+        if s.get("problem_essence"): st.markdown(f"**Суть:** {s['problem_essence']}")
+        if s.get("why_complex"): st.markdown(f"**Почему комплексная:** {s['why_complex']}")
+        st.write({"тип":c.get("problem_type"),"сущности":c.get("entities",[])[:12],"действия":c.get("actions",[])[:8],"акторы":c.get("actors",[])[:8],"территории":c.get("territories",[])[:8],"период":c.get("time_window",{})})
+        if s.get("management_actions"):
+            st.markdown("**Возможные действия**")
+            for a in s["management_actions"]: st.markdown(f"- {a}")
+        if c.get("evidence_appeals"):
+            st.markdown("**Подтверждающие обращения**")
+            for ev in c.get("evidence_appeals",[])[:5]: st.markdown(f"- `{ev.get('appeal_id')}` · {ev.get('date') or ''} · {ev.get('address') or ''}"); st.caption(str(ev.get("text") or "")[:700])

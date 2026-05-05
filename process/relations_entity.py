@@ -1,253 +1,53 @@
+from __future__ import annotations
+import re
+from collections import Counter
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 import pandas as pd
-import string
-import spacy
-from typing import List, Dict, Optional, Set
+
+def norm(x:Any)->str: return re.sub(r"\s+"," ",str(x or "").lower().replace("ё","е")).strip(" .,:;!?-—")
+def uniq(xs:Iterable[str], n:int=99)->List[str]:
+    seen=set(); out=[]
+    for x in xs:
+        x=norm(x)
+        if x and x not in seen: seen.add(x); out.append(x)
+        if len(out)>=n: break
+    return out
 
 class UrbanProblemsGraphExtractor:
-    """Класс для извлечения сущностей и связей для построения графа городских проблем"""
-    
-    def __init__(self, spacy_model: str = "ru_core_news_sm"):
-        """
-        Инициализация экстрактора графа
-        
-        Args:
-            spacy_model: Название модели SpaCy для русского языка
-        """
-        self.nlp = spacy.load(spacy_model)
-        
-        # POS-теги, которые считаем "мусором"
-        self.bad_pos = {"ADP", "CCONJ", "SCONJ", "PRON", "PART", 
-                       "DET", "INTJ", "SYM", "PUNCT", "X"}
-        
-        # Словарь для переименования сущностей
-        self.entity_renames = {
-            "id|": "житель",
-            "id_": "житель",
-            "id-": "житель",
-            "номер": "житель",
-            "аноним": "житель"
-        }
-    
-    def _is_valid_entity(self, text: str) -> bool:
-        """
-        Проверка, является ли текст валидной сущностью
-        
-        Args:
-            text: Текст для проверки
-            
-        Returns:
-            True если сущность валидна, False иначе
-        """
-        text = text.strip()
-        
-        # Проверка на пустоту или только пунктуацию
-        if not text or all(char in string.punctuation for char in text):
-            return False
-        
-        # Анализ с помощью SpaCy
-        doc = self.nlp(text)
-        for token in doc:
-            if token.pos_ in self.bad_pos:
-                return False
-        
-        return True
-    
-    def _normalize_entity(self, entity: str) -> str:
-        """
-        Нормализация названия сущности
-        
-        Args:
-            entity: Исходное название сущности
-            
-        Returns:
-            Нормализованное название
-        """
-        entity = entity.strip().lower()
-        
-        # Переименование ID-подобных сущностей
-        for pattern, replacement in self.entity_renames.items():
-            if pattern in entity:
-                return replacement
-        
-        # Удаление лишних пробелов и возврат с правильным регистром
-        return entity.strip().capitalize()
-    
-    def _extract_relations_from_sentence(self, sent, doc_idx: int) -> List[Dict]:
-        """
-        Извлечение отношений из одного предложения
-        
-        Args:
-            sent: Объект предложения SpaCy
-            doc_idx: Индекс документа в исходном DataFrame
-            
-        Returns:
-            Список отношений из предложения
-        """
-        relations = []
-        subj = None
-        obj = None
-        verb = None
-        
-        for token in sent:
-            # Поиск глагола (действия/проблемы)
-            if token.pos_ == "VERB":
-                verb = token.lemma_
-            
-            # Поиск подлежащего (субъекта)
-            if token.dep_ in ("nsubj", "nsubj:pass"):
-                subj = token.text
-            
-            # Поиск дополнения (объекта)
-            if token.dep_ in ("obj", "dobj", "obl", "iobj"):
-                obj = token.text
-        
-        # Если найдены все компоненты
-        if subj and verb and obj:
-            # Проверка валидности сущностей
-            if self._is_valid_entity(subj) and self._is_valid_entity(obj):
-                # Нормализация сущностей
-                subj = self._normalize_entity(subj)
-                obj = self._normalize_entity(obj)
-                
-                relations.append({
-                    'Объект': obj,
-                    'Связь': verb,
-                    'Субъект': subj,
-                    'doc_index': doc_idx,
-                    'sentence_text': sent.text
-                })
-        
-        return relations
-    
-
-    def extract_entities(self, df_source: pd.DataFrame, text_column: str = "Текст") -> pd.DataFrame:
-        """
-        Извлечение NER-сущностей по каждому документу.
-        Сохраняет исходный текст сущности, метку и нормализованную форму.
-        """
-        if text_column not in df_source.columns:
-            raise ValueError(f"Колонка '{text_column}' не найдена в DataFrame")
-
-        entities = []
-        for idx, text in enumerate(df_source[text_column]):
-            if not isinstance(text, str):
-                text = "" if pd.isna(text) else str(text)
-
-            doc = self.nlp(text)
-            for ent in doc.ents:
-                norm = self._normalize_entity(ent.text)
-                entities.append({
-                    "doc_index": idx,
-                    "entity": ent.text,
-                    "entity_normalized": norm,
-                    "label": ent.label_,
-                    "start_char": ent.start_char,
-                    "end_char": ent.end_char,
-                    "context": text[max(0, ent.start_char - 80): min(len(text), ent.end_char + 80)].strip()
-                })
-
-        if not entities:
-            return pd.DataFrame(columns=[
-                "doc_index", "entity", "entity_normalized", "label",
-                "start_char", "end_char", "context"
-            ])
-
-        return pd.DataFrame(entities).drop_duplicates().reset_index(drop=True)
-
-    def get_entity_statistics(self, entities_df: pd.DataFrame, top_n: int = 100) -> pd.DataFrame:
-        """Агрегированная статистика по сущностям NER."""
-        if entities_df is None or entities_df.empty:
-            return pd.DataFrame(columns=["entity_normalized", "label", "count", "documents_count"])
-
-        stats = (
-            entities_df.groupby(["entity_normalized", "label"], dropna=False)
-            .agg(
-                count=("entity", "size"),
-                documents_count=("doc_index", pd.Series.nunique),
-                variants=("entity", lambda s: sorted(set(map(str, s)))[:10])
-            )
-            .reset_index()
-            .sort_values(["count", "documents_count"], ascending=False)
-            .head(top_n)
-        )
-        return stats
-
-    def extract_relations(self, df_source: pd.DataFrame, text_column: str = "text_lem") -> pd.DataFrame:
-        """
-        Основной метод извлечения отношений из DataFrame
-        
-        Args:
-            df_source: Исходный DataFrame с текстами
-            text_column: Название колонки с текстом (лемматизированным)
-            
-        Returns:
-            DataFrame с колонками: Объект, Связь, Субъект
-        """
-        relations_data = []
-        
-        # Проверка наличия необходимой колонки
-        if text_column not in df_source.columns:
-            raise ValueError(f"Колонка '{text_column}' не найдена в DataFrame")
-        
-        for idx, text_list in enumerate(df_source[text_column]):
-            # Объединение лемм в текст
-            if isinstance(text_list, list):
-                text = " ".join(text_list)
-            else:
-                text = str(text_list)
-            
-            # Анализ текста
-            doc = self.nlp(text)
-            
-            # Извлечение отношений из каждого предложения
-            for sent in doc.sents:
-                relations = self._extract_relations_from_sentence(sent, idx)
-                relations_data.extend(relations)
-        
-        # Создание DataFrame и удаление дубликатов
-        if relations_data:
-            result_df = pd.DataFrame(relations_data)
-            result_df = result_df[['Объект', 'Связь', 'Субъект']]  # Выбор нужных колонок
-            result_df = result_df.drop_duplicates().reset_index(drop=True)
-        else:
-            result_df = pd.DataFrame(columns=['Объект', 'Связь', 'Субъект'])
-        
-        return result_df
-    
-    def extract_with_context(self, df_source: pd.DataFrame, text_column: str = "text_lem") -> pd.DataFrame:
-        """
-        Извлечение отношений с дополнительным контекстом
-        
-        Args:
-            df_source: Исходный DataFrame с текстами
-            text_column: Название колонки с текстом
-            
-        Returns:
-            DataFrame с полной информацией об отношениях
-        """
-        relations_data = []
-        
-        if text_column not in df_source.columns:
-            raise ValueError(f"Колонка '{text_column}' не найдена в DataFrame")
-        
-        for idx, text_list in enumerate(df_source[text_column]):
-            if isinstance(text_list, list):
-                text = " ".join(text_list)
-            else:
-                text = str(text_list)
-            
-            doc = self.nlp(text)
-            
-            for sent in doc.sents:
-                relations = self._extract_relations_from_sentence(sent, idx)
-                relations_data.extend(relations)
-        
-        if relations_data:
-            result_df = pd.DataFrame(relations_data)
-            result_df = result_df.drop_duplicates().reset_index(drop=True)
-        else:
-            result_df = pd.DataFrame(columns=[
-                'Объект', 'Связь', 'Субъект', 'doc_index', 'sentence_text'
-            ])
-        
-        return result_df
+    OBJECTS={"дворовая территория":["двор","дворовая территория","придомовая территория"],"снег и наледь":["снег","наледь","гололед","сугроб","лед"],"дорога":["дорога","проезжая часть","асфальт","ям","колея"],"тротуар":["тротуар","пешеходная дорожка"],"освещение":["фонарь","освещение","свет","лампа"],"мусор":["мусор","тко","контейнер","помойка","свалка","отход"],"отопление":["отопление","батарея","тепло","теплоснабжение"],"водоснабжение":["вода","водоснабжение","труба","протечка","канализация","затопление"],"подъезд":["подъезд","лестница"],"крыша":["крыша","кровля"],"лифт":["лифт"],"детская площадка":["детская площадка","площадка","качели","горка"],"парк/сквер":["парк","сквер","газон"],"общественный транспорт":["автобус","трамвай","троллейбус","маршрут","остановка","транспорт"],"здание/дом":["дом","мкд","здание"]}
+    ACTORS={"жители":["житель","жители","люди","горожане","мы","нас"],"управляющая компания":["управляющая компания","ук","жэк","жкх","тсж"],"администрация":["администрация","мэрия","управа"],"подрядчик":["подрядчик","служба","коммунальщики","дорожники"],"ресурсоснабжающая организация":["водоканал","теплосеть","энергетики"]}
+    ACTIONS={"не убирает":["не убира","не чист","не вывоз","завален","засыпан"],"не работает":["не работает","не горит","сломал","поломан"],"не устраняет":["не устраня","бездейств","не реагир","не принимает меры"],"повреждено":["разбит","разруш","поврежд","яма","трещин","провал"],"отсутствует":["нет","отсутств","не хватает"],"загрязнено":["гряз","загряз","свалк","мусор"],"опасно":["опасн","угроза","травм","аварийн"],"затоплено":["течет","затоп","луж","вода стоит","протеч"],"задержано":["задерж","срок","долго","месяц","год"]}
+    ANCHORS={"нарушение содержания территории":["не убира","гряз","снег","наледь","мусор","сугроб"],"техническая неисправность":["не работает","сломал","поломан","не горит"],"аварийное состояние":["авария","аварийн","опасн","угроза","разруш"],"затопление/протечка":["затоп","течет","протеч","луж","вода"],"отсутствие услуги":["нет отопления","нет воды","отсутств","не хватает"],"бездействие исполнителя":["бездейств","не реагир","не устраня","жалоб","обращал"]}
+    THEME={"дворовая территория":"благоустройство","снег и наледь":"благоустройство","дорога":"инфраструктура","тротуар":"инфраструктура","освещение":"безопасность","мусор":"жилищно-коммунальное","отопление":"жилищно-коммунальное","водоснабжение":"жилищно-коммунальное","подъезд":"жилищно-коммунальное","крыша":"жилищно-коммунальное","лифт":"жилищно-коммунальное","детская площадка":"благоустройство","парк/сквер":"благоустройство","общественный транспорт":"транспорт","здание/дом":"жилищно-коммунальное"}
+    def __init__(self):
+        self.rx={name:self._compile(d) for name,d in [("objects",self.OBJECTS),("actors",self.ACTORS),("actions",self.ACTIONS),("anchors",self.ANCHORS)]}
+    @staticmethod
+    def _compile(d:Dict[str,Sequence[str]]): return [(k,re.compile("(?:"+"|".join(re.escape(v).replace("\\ ",r"\s+") for v in vs)+")",re.I)) for k,vs in d.items()]
+    def _find(self,text,kind): return uniq(k for k,rx in self.rx[kind] if rx.search(text or ""))
+    def detect_objects(self,text): return self._find(text,"objects")
+    def detect_actors(self,text): return self._find(text,"actors") or ["жители"]
+    def detect_actions(self,text): return self._find(text,"actions") or ["сообщает о проблеме"]
+    def detect_anchors(self,text): return self._find(text,"anchors") or ["проблемный сигнал"]
+    def extract_entities(self, df, text_column="clean_text"):
+        rows=[]
+        for idx,r in df.iterrows():
+            text=str(r.get(text_column) or r.get("clean_text") or r.get("raw_text") or ""); aid=r.get("appeal_id",f"appeal_{idx:06d}"); cat=norm(r.get("category_norm") or "другое"); addr=norm(r.get("address_norm") or "")
+            groups=[("object",self.detect_objects(text)),("actor",self.detect_actors(text)),("action",self.detect_actions(text)),("problem_anchor",self.detect_anchors(text)),("theme",[cat] if cat else []),("territory",[addr] if addr else [])]
+            for typ,vals in groups:
+                for v in vals: rows.append({"doc_index":int(idx),"appeal_id":aid,"entity":v,"normalized":norm(v),"entity_type":typ,"category":cat,"address":addr,"date":r.get("date_norm"),"context":text[:500]})
+        return pd.DataFrame(rows)
+    def extract_with_context(self, df, text_column="clean_text"):
+        rows=[]
+        for idx,r in df.iterrows():
+            text=str(r.get(text_column) or r.get("clean_text") or r.get("raw_text") or ""); aid=r.get("appeal_id",f"appeal_{idx:06d}"); cat=norm(r.get("category_norm") or "другое"); addr=norm(r.get("address_norm") or "")
+            objects=self.detect_objects(text) or ([cat] if cat else []); actors=self.detect_actors(text); actions=self.detect_actions(text); anchors=self.detect_anchors(text)
+            for obj in objects:
+                theme=self.THEME.get(obj,cat or "другое")
+                for actor in actors[:3]:
+                    for action in actions[:4]:
+                        for anchor in anchors[:3]: rows.append({"doc_index":int(idx),"appeal_id":aid,"Субъект":actor,"Связь":action,"Объект":obj,"Проблемный_признак":anchor,"Тема":theme,"Категория_источника":cat,"Адрес":addr,"Дата":r.get("date_norm"),"Контекст":text[:700],"raw_text":str(r.get("raw_text") or text)[:1200],"emotion_score":float(r.get("emotion_score") or 0),"urgency_flag":bool(r.get("urgency_flag") or False)})
+        return pd.DataFrame(rows)
+    @staticmethod
+    def get_entity_statistics(entities_df):
+        if entities_df is None or entities_df.empty: return pd.DataFrame(columns=["entity_type","normalized","count"])
+        return entities_df.groupby(["entity_type","normalized"],dropna=False).size().reset_index(name="count").sort_values(["entity_type","count"],ascending=[True,False])

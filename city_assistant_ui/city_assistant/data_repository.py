@@ -1,59 +1,28 @@
+from __future__ import annotations
 import json
-import os
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 import pandas as pd
-
-REQUIRED_COLS = [
-    "Проблема",
-    "Тип_проблемы",
-    "Частота_упоминаний",
-    "Количество_субъектов",
-    "Количество_действий",
-    "Плотность_подграфа",
-    "Complexity_score",
-]
-
-
 class DataRepository:
-    def __init__(self, artifacts_root: str, scenario_id: str):
-        self.artifacts_root = artifacts_root
-        self.scenario_id = scenario_id
-
-    def scenario_dir(self) -> str:
-        return os.path.join(self.artifacts_root, self.scenario_id)
-
-    def path(self, filename: str) -> str:
-        return os.path.join(self.scenario_dir(), filename)
-
-    def list_scenarios(self) -> list[str]:
-        if not os.path.isdir(self.artifacts_root):
-            return []
-        return sorted([d for d in os.listdir(self.artifacts_root) if os.path.isdir(os.path.join(self.artifacts_root, d))])
-
-    def load_problems(self, filename: str) -> pd.DataFrame:
-        path = filename if os.path.isabs(filename) else self.path(filename)
-    
-        df = pd.read_csv(path)
-
-        missing = [c for c in REQUIRED_COLS if c not in df.columns]
-        if missing:
-            raise ValueError(f"В CSV не хватает колонок: {missing}. Найдены: {list(df.columns)}")
-
-        df["Complexity_score"] = pd.to_numeric(df["Complexity_score"], errors="coerce").fillna(0.0)
-        df["Частота_упоминаний"] = pd.to_numeric(df["Частота_упоминаний"], errors="coerce").fillna(0).astype(int)
-        df["Количество_субъектов"] = pd.to_numeric(df["Количество_субъектов"], errors="coerce").fillna(0).astype(int)
-        df["Количество_действий"] = pd.to_numeric(df["Количество_действий"], errors="coerce").fillna(0).astype(int)
-        df["Плотность_подграфа"] = pd.to_numeric(df["Плотность_подграфа"], errors="coerce").fillna(0.0)
-
-        df["Проблема"] = df["Проблема"].astype(str).str.strip()
-        df["Тип_проблемы"] = df["Тип_проблемы"].astype(str).str.strip()
-        return df
-
-    def load_json(self, filename: str) -> dict | None:
-        path = filename if os.path.isabs(filename) else self.path(filename)
-        if not os.path.exists(path):
-            return None
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return None
+    def __init__(self, artifacts_root, scenario_id="default"):
+        self.artifacts_root=Path(artifacts_root); self.scenario_id=scenario_id; self.scenario_dir=self.artifacts_root/scenario_id
+    def list_scenarios(self): return sorted([p.name for p in self.artifacts_root.iterdir() if p.is_dir()]) if self.artifacts_root.exists() else []
+    def path(self, rel):
+        p=Path(rel); return p if p.is_absolute() else self.scenario_dir/p
+    @staticmethod
+    def _read_jsonl(path):
+        rows=[]
+        with path.open("r",encoding="utf-8") as f:
+            for line in f:
+                if line.strip(): rows.append(json.loads(line))
+        return rows
+    def load_candidates(self,jsonl_relative,csv_relative:Optional[str]=None):
+        jp=self.path(jsonl_relative)
+        if jp.exists(): return self._read_jsonl(jp)
+        if csv_relative and self.path(csv_relative).exists():
+            df=pd.read_csv(self.path(csv_relative)); return [self._flat(r) for _,r in df.iterrows()]
+        return []
+    @staticmethod
+    def _flat(r):
+        def split(v): return [] if pd.isna(v) else [x.strip() for x in str(v).split(';') if x.strip()]
+        return {"candidate_id":r.get("candidate_id"),"title":r.get("Проблема"),"problem_type":r.get("Тип_проблемы"),"complexity_score":float(r.get("Complexity_score",0) or 0),"metrics":{"frequency":int(r.get("Частота_упоминаний",0) or 0),"relations_count":int(r.get("Количество_связей",0) or 0),"subgraph_density":float(r.get("Плотность_подграфа",0) or 0)},"entities":split(r.get("Ключевые_сущности")),"actions":split(r.get("Действия")),"problem_anchors":split(r.get("Проблемные_признаки")),"territories":split(r.get("Территории")),"evidence_appeals":[]}
