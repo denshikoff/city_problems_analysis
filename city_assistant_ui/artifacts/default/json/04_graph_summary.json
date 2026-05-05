@@ -1,0 +1,11 @@
+{
+  "nodes": 770,
+  "edges": 10395,
+  "relations_rows": 1649,
+  "candidates": 71,
+  "density": {
+    "density": 0.035111,
+    "directed_density": 0.017555,
+    "edges_per_node": 13.5
+  }
+}

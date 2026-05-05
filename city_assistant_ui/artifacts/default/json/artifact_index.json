@@ -1,0 +1,49 @@
+{
+  "output_dir": "city_assistant_ui\\artifacts\\default",
+  "steps": {
+    "raw_dataset": {
+      "csv": "city_assistant_ui\\artifacts\\default\\tables\\00_raw_dataset.csv",
+      "xlsx": "city_assistant_ui\\artifacts\\default\\tables\\00_raw_dataset.xlsx"
+    },
+    "cleaned_dataset": {
+      "csv": "city_assistant_ui\\artifacts\\default\\tables\\01_cleaned_dataset.csv",
+      "xlsx": "city_assistant_ui\\artifacts\\default\\tables\\01_cleaned_dataset.xlsx"
+    },
+    "preprocessing_report": "city_assistant_ui\\artifacts\\default\\json\\01_preprocessing_report.json",
+    "entities": {
+      "csv": "city_assistant_ui\\artifacts\\default\\tables\\02_entities.csv",
+      "xlsx": "city_assistant_ui\\artifacts\\default\\tables\\02_entities.xlsx"
+    },
+    "entity_statistics": {
+      "csv": "city_assistant_ui\\artifacts\\default\\tables\\02_entity_statistics.csv",
+      "xlsx": "city_assistant_ui\\artifacts\\default\\tables\\02_entity_statistics.xlsx"
+    },
+    "relations": {
+      "csv": "city_assistant_ui\\artifacts\\default\\tables\\03_relations.csv",
+      "xlsx": "city_assistant_ui\\artifacts\\default\\tables\\03_relations.xlsx"
+    },
+    "graph_density": "city_assistant_ui\\artifacts\\default\\json\\04_graph_density.json",
+    "graph_summary": "city_assistant_ui\\artifacts\\default\\json\\04_graph_summary.json",
+    "centrality_full": {
+      "csv": "city_assistant_ui\\artifacts\\default\\tables\\04_centrality_full.csv",
+      "xlsx": "city_assistant_ui\\artifacts\\default\\tables\\04_centrality_full.xlsx"
+    },
+    "problem_candidates_csv": {
+      "csv": "city_assistant_ui\\artifacts\\default\\tables\\05_problem_candidates.csv",
+      "xlsx": "city_assistant_ui\\artifacts\\default\\tables\\05_problem_candidates.xlsx"
+    },
+    "problem_candidates_jsonl": "city_assistant_ui\\artifacts\\default\\json\\problem_candidates.jsonl",
+    "graph_exports": {
+      "graphml": "city_assistant_ui\\artifacts\\default\\graphs\\knowledge_graph.graphml",
+      "top_problem_graph_png": "city_assistant_ui\\artifacts\\default\\graphs\\top_problem_graph.png"
+    },
+    "agent_payload": "city_assistant_ui\\artifacts\\default\\json\\06_agent_payload.json",
+    "agent_result": "city_assistant_ui\\artifacts\\default\\json\\06_final_agent_report.json"
+  },
+  "column_mapping": {
+    "text": "Текст",
+    "date": "Дата создания",
+    "address": null,
+    "category": "Направление"
+  }
+}

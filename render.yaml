@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: city-problems-assistant
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m streamlit run city_assistant_ui/app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: CITY_ASSISTANT_SCENARIO
+        value: default
+      - key: CITY_ASSISTANT_CHAT_MODE
+        value: heuristic
